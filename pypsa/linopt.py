@@ -858,6 +858,22 @@ def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
         logger.warning("Shadow prices of MILP couldn't be parsed")
         constraints_dual = pd.Series(index=[c.ConstrName for c in m.getConstrs()])
     objective = m.ObjVal
+
+    # Write some solver statistics to a log file.
+    stats_filename = solver_logfile.replace(".log", "_stats.csv")
+    logger.info(f"Writing Gurobi runtime to {stats_filename}")
+    runtime = m.runtime   # Gets over-written by the following presolve.
+    p = m.presolve()
+    stats = {"runtime": runtime,
+             "barIterCount": m.barIterCount,
+             "numVars": m.numVars,
+             "numConstrs": m.numConstrs,
+             "numNZs": m.numNZs,
+             "presolved_numVars": p.numVars,
+             "presolved_numConstrs": p.numConstrs,
+             "presolved_numNZs": p.numNZs}
+    pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
+
     del m
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
