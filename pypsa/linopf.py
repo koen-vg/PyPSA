@@ -871,10 +871,10 @@ def prepare_lopf(n, snapshots=None, keep_files=False, skip_objective=False,
     fdi, binaries_fn = mkstemp('.txt', 'pypsa-binaries-', **tmpkwargs)
     fdp, problem_fn = mkstemp('.lp', 'pypsa-problem-', **tmpkwargs)
 
-    n.objective_f = open(objective_fn, mode='w')
-    n.constraints_f = open(constraints_fn, mode='w')
-    n.bounds_f = open(bounds_fn, mode='w')
-    n.binaries_f = open(binaries_fn, mode='w')
+    n.objective_f = open(objective_fn, mode='w+')
+    n.constraints_f = open(constraints_fn, mode='w+')
+    n.bounds_f = open(bounds_fn, mode='w+')
+    n.binaries_f = open(binaries_fn, mode='w+')
 
     n.objective_f.write('\* LOPF *\n\nmin\nobj:\n')
     n.constraints_f.write("\n\ns.t.\n\n")
@@ -964,7 +964,12 @@ def assign_solution(n, sns, variables_sol, constraints_dual,
             n.solutions.at[(c, attr), 'pnl'] = True
             pnl = n.pnl(c) if predefined else n.sols[c].pnl
             variables_sol.loc[-1] = 0
-            values = variables.applymap(lambda x: variables_sol.loc[x])
+            # If we modify the linear program before passing it to the
+            # solver and remove some variables, not every entry in
+            # `variables` will be found in `variables_sol`. Just set
+            # missing variables to nan.
+            values = variables.applymap(lambda x: variables_sol.loc[x]
+                                        if x in variables_sol else np.nan)
             if c in n.passive_branch_components and attr == "s":
                 set_from_frame(pnl, 'p0', values)
                 set_from_frame(pnl, 'p1', - values)
