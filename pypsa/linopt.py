@@ -751,7 +751,7 @@ def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
                  "barIterCount": np.nan,
                  "numVars": info.Columns,
                  "numConstrs": info.Rows,
-                 "numNZs": info.iloc["Non-zeros"],
+                 "numNZs": info.at["Non-zeros"],
                  "presolved_numVars": np.nan,
                  "presolved_numConstrs": np.nan,
                  "presolved_numNZs": np.nan}
