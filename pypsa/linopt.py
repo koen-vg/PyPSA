@@ -30,6 +30,7 @@ __copyright__ = ("Copyright 2015-2021 PyPSA Developers, see https://pypsa.readth
 from .descriptors import Dict
 import pandas as pd
 import os
+import time
 import logging, re, io, subprocess
 import numpy as np
 from pandas import IndexSlice as idx
