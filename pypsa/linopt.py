@@ -756,9 +756,25 @@ def run_and_read_cplex(n, problem_fn, solution_fn, solver_logfile,
     m.read(problem_fn)
     if warmstart:
         m.start.read_basis(warmstart)
+    start = m.get_time()
     m.solve()
+    runtime = m.get_time() - start # runtime in seconds
     is_lp = m.problem_type[m.get_problem_type()] == 'LP'
     if isinstance(log_file_or_path, io.IOBase): log_file_or_path.close()
+
+    stats_filename = solver_logfile.replace(".log", "_stats.csv")
+    logger.info(f"Writing solver statistics to {stats_filename}")
+    stats = m.get_stats()
+    stats = {"runtime": runtime,
+             # "barIterCount": m.barIterCount,
+             "numVars": stats.num_variables,
+             "numConstrs": stats.num_linear_constraints,
+             "numNZs": stats.num_linear_nz,
+             # "presolved_numVars": p.numVars,
+             # "presolved_numConstrs": p.numConstrs,
+             # "presolved_numNZs": p.numNZs
+             }
+    pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
 
     termination_condition = m.solution.get_status_string()
     if 'optimal' in termination_condition:
@@ -862,7 +878,7 @@ def run_and_read_gurobi(n, problem_fn, solution_fn, solver_logfile,
     # Write some solver statistics to a log file.
     if solver_logfile is not None:
         stats_filename = solver_logfile.replace(".log", "_stats.csv")
-        logger.info(f"Writing Gurobi runtime to {stats_filename}")
+        logger.info(f"Writing solver statistics to {stats_filename}")
         runtime = m.runtime   # Gets over-written by the following presolve.
         p = m.presolve()
         stats = {"runtime": runtime,
