@@ -625,8 +625,10 @@ def run_and_read_cbc(n, problem_fn, solution_fn, solver_logfile,
         os.mknod(solution_fn)
 
     log = open(solver_logfile, 'w') if solver_logfile is not None else subprocess.PIPE
+    start = time.time()
     result = subprocess.Popen(command.split(' '), stdout=log)
     result.wait()
+    runtime = time.time() - start # walltime in seconds
 
     with open(solution_fn, "r") as f:
         data = f.readline()
@@ -655,6 +657,21 @@ def run_and_read_cbc(n, problem_fn, solution_fn, solver_logfile,
     variables_b = sol.index.str[0] == 'x'
     variables_sol = sol[variables_b][2].pipe(set_int_index)
     constraints_dual = sol[~variables_b][3].pipe(set_int_index)
+
+    # Write some solver statistics to a log file.
+    if solver_logfile is not None:
+        stats_filename = solver_logfile.replace(".log", "_stats.csv")
+        logger.info(f"Writing solver statistics to {stats_filename}")
+        stats = {"runtime": runtime,
+                 "barIterCount": np.nan,
+                 "numVars": np.nan,
+                 "numConstrs": np.nan,
+                 "numNZs": np.nan,
+                 "presolved_numVars": np.nan,
+                 "presolved_numConstrs": np.nan,
+                 "presolved_numNZs": np.nan}
+        pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
+
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
 
@@ -681,8 +698,10 @@ def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
     if (solver_options is not None) and (solver_options != {}):
         command += solver_options
 
+    start = time.time()
     result = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE)
     result.wait()
+    runtime = time.time() - start # walltime in seconds
 
     f = open(solution_fn)
     def read_until_break(f):
@@ -723,6 +742,20 @@ def run_and_read_glpk(n, problem_fn, solution_fn, solver_logfile,
                      ['Activity'].astype(float).pipe(set_int_index))
     f.close()
 
+    # Write some solver statistics to a log file.
+    if solver_logfile is not None:
+        stats_filename = solver_logfile.replace(".log", "_stats.csv")
+        logger.info(f"Writing solver statistics to {stats_filename}")
+        stats = {"runtime": runtime,
+                 "barIterCount": np.nan,
+                 "numVars": info.Columns,
+                 "numConstrs": info.Rows,
+                 "numNZs": info.iloc["Non-zeros"],
+                 "presolved_numVars": np.nan,
+                 "presolved_numConstrs": np.nan,
+                 "presolved_numNZs": np.nan}
+        pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
+
     return (status, termination_condition, variables_sol,
             constraints_dual, objective)
 
@@ -762,19 +795,20 @@ def run_and_read_cplex(n, problem_fn, solution_fn, solver_logfile,
     is_lp = m.problem_type[m.get_problem_type()] == 'LP'
     if isinstance(log_file_or_path, io.IOBase): log_file_or_path.close()
 
-    stats_filename = solver_logfile.replace(".log", "_stats.csv")
-    logger.info(f"Writing solver statistics to {stats_filename}")
-    stats = m.get_stats()
-    stats = {"runtime": runtime,
-             # "barIterCount": m.barIterCount,
-             "numVars": stats.num_variables,
-             "numConstrs": stats.num_linear_constraints,
-             "numNZs": stats.num_linear_nz,
-             # "presolved_numVars": p.numVars,
-             # "presolved_numConstrs": p.numConstrs,
-             # "presolved_numNZs": p.numNZs
-             }
-    pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
+    if solver_logfile:
+        stats_filename = solver_logfile.replace(".log", "_stats.csv")
+        logger.info(f"Writing solver statistics to {stats_filename}")
+        stats = m.get_stats()
+        stats = {"runtime": runtime,
+                 # "barIterCount": m.barIterCount,
+                 "numVars": stats.num_variables,
+                 "numConstrs": stats.num_linear_constraints,
+                 "numNZs": stats.num_linear_nz,
+                 # "presolved_numVars": p.numVars,
+                 # "presolved_numConstrs": p.numConstrs,
+                 # "presolved_numNZs": p.numNZs
+                 }
+        pd.DataFrame(stats, index=[0]).to_csv(stats_filename)
 
     termination_condition = m.solution.get_status_string()
     if 'optimal' in termination_condition:
