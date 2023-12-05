@@ -904,12 +904,12 @@ def import_components_from_dataframe(network, dataframe, cls_name):
         else:
             if static_attrs.at[k, "type"] == "string":
                 dataframe[k] = dataframe[k].replace({np.nan: ""})
-            if dataframe[k].dtype != static_attrs.at[k, "typ"]:
+            if dataframe[k].dtype != static_attrs.at[k, "type"]:
                 if static_attrs.at[k, "type"] == "geometry":
                     geometry = dataframe[k].replace({"": None, np.nan: None})
                     dataframe[k] = gpd.GeoSeries.from_wkt(geometry)
                 else:
-                    dataframe[k] = dataframe[k].astype(static_attrs.at[k, "typ"])
+                    dataframe[k] = dataframe[k].astype(static_attrs.at[k, "type"])
 
     # check all the buses are well-defined
     for attr in ["bus", "bus0", "bus1"]:
