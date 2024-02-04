@@ -373,6 +373,10 @@ def optimize_mga(
     # build budget constraint
     optimal_cost = (n.statistics.capex() + n.statistics.opex()).sum()
     fixed_cost = n.statistics.installed_capex().sum()
+    if multi_investment_periods:
+        optimal_cost = optimal_cost.sum()
+        fixed_cost = fixed_cost.sum()
+
     objective = m.objective
     if not isinstance(objective, (LinearExpression, QuadraticExpression)):
         objective = objective.expression
