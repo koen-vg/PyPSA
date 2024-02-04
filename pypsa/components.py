@@ -19,6 +19,7 @@ __copyright__ = (
 import os
 import sys
 from collections import namedtuple
+from copy import deepcopy
 from pathlib import Path
 from typing import List, Union
 
@@ -1209,8 +1210,12 @@ class Network(Basic):
             )
 
         # catch all remaining attributes of network
-        for attr in ["name", "srid"]:
+        for attr in ["name", "srid", "objective", "objective_constant"]:
             setattr(network, attr, getattr(self, attr))
+
+        # Make sure to deep-copy the meta dictionary
+        if hasattr(self, "meta"):
+            network.meta = deepcopy(self.meta)
 
         return network
 
