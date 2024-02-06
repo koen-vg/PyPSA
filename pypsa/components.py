@@ -1211,7 +1211,8 @@ class Network(Basic):
 
         # catch all remaining attributes of network
         for attr in ["name", "srid", "objective", "objective_constant"]:
-            setattr(network, attr, getattr(self, attr))
+            if hasattr(self, attr):
+                setattr(network, attr, getattr(self, attr))
 
         # Make sure to deep-copy the meta dictionary
         if hasattr(self, "meta"):
