@@ -277,7 +277,7 @@ def create_model(
 
     meshed_buses = get_strongly_meshed_buses(n)
     weakly_meshed_buses = n.buses.index.difference(meshed_buses)
-    if not meshed_buses.empty and not weakly_meshed_buses.empty:
+    if meshed_buses.any() and weakly_meshed_buses.any():
         # Write constraint for buses many terms and for buses with a few terms
         # separately. This reduces memory usage for large networks.
         define_nodal_balance_constraints(
