@@ -329,6 +329,10 @@ def assign_solution(n):
         if name == "objective_constant":
             continue
 
+        if hasattr(n, "skipVariables"):
+            if name in n.skipVariables:
+                continue
+
         try:
             c, attr = name.split("-", 1)
             df = sol.to_pandas()
