@@ -369,11 +369,6 @@ def assign_solution(n):
 
     n.objective = m.objective_value
 
-    # Additionally store the objective and objective_constant in
-    # n.meta so that they are preserved in IO exports/imports.
-    n.meta["objective"] = n.objective
-    n.meta["objective_constant"] = n.objective_constant
-
 
 def assign_duals(n, assign_all_duals=False):
     """
