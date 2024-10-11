@@ -63,7 +63,7 @@ def get_switchable_as_dense(
     static = n.static(component)
     dynamic = n.dynamic(component)
 
-    index = static.index
+    index = static.loc[n.get_active_assets(component)].index
 
     varying_i = dynamic[attr].columns
     fixed_i = static.index.difference(varying_i)
@@ -124,7 +124,7 @@ def get_switchable_as_iter(
     static = n.static(component)
     dynamic = n.dynamic(component)
 
-    index = static.index
+    index = static.loc[n.get_active_assets(component)].index
     varying_i = dynamic[attr].columns
     fixed_i = static.index.difference(varying_i)
 
@@ -240,7 +240,9 @@ def get_extendable_i(n: Network, c: str) -> pd.Index:
 
     Get the index of extendable elements of a given component.
     """
-    idx = n.static(c)[lambda ds: ds[nominal_attrs[c] + "_extendable"]].index
+    idx = n.static(c)[
+        lambda ds: ds[nominal_attrs[c] + "_extendable"] & ds["active"]
+    ].index
     return idx.rename(f"{c}-ext")
 
 
@@ -250,7 +252,9 @@ def get_non_extendable_i(n: Network, c: str) -> pd.Index:
 
     Get the index of non-extendable elements of a given component.
     """
-    idx = n.static(c)[lambda ds: ~ds[nominal_attrs[c] + "_extendable"]].index
+    idx = n.static(c)[
+        lambda ds: ~ds[nominal_attrs[c] + "_extendable"] & ds["active"]
+    ].index
     return idx.rename(f"{c}-fix")
 
 
@@ -263,7 +267,7 @@ def get_committable_i(n: Network, c: str) -> pd.Index:
     if "committable" not in n.static(c):
         idx = pd.Index([])
     else:
-        idx = n.static(c)[lambda ds: ds["committable"]].index
+        idx = n.static(c)[lambda ds: ds["committable"] & ds["active"]].index
     return idx.rename(f"{c}-com")
 
 

@@ -572,15 +572,16 @@ def define_nodal_balance_constraints(
     for arg in args:
         c, attr, column, sign = arg
 
-        if n.static(c).empty:
+        assets = n.static(c).loc[n.get_active_assets(c)]
+        if assets.empty:
             continue
 
-        if "sign" in n.static(c):
+        if "sign" in assets:
             # additional sign necessary for branches in reverse direction
-            sign = sign * n.static(c).sign
+            sign = sign * assets.sign
 
         expr = DataArray(sign) * m[f"{c}-{attr}"]
-        cbuses = n.static(c)[column][lambda ds: ds.isin(buses)].rename("Bus")
+        cbuses = assets[column][lambda ds: ds.isin(buses)].rename("Bus")
 
         #  drop non-existent multiport buses which are ''
         if column in ["bus" + i for i in additional_linkports(n)]:
@@ -866,8 +867,8 @@ def define_store_constraints(n: Network, sns: pd.Index) -> None:
     m = n.model
     c = "Store"
     dim = "snapshot"
-    assets = n.static(c)
-    active = DataArray(get_activity_mask(n, c, sns))
+    assets = n.static(c).loc[n.get_active_assets(c)]
+    active = DataArray(get_activity_mask(n, c, sns)[assets.index])
 
     if assets.empty:
         return
@@ -1008,7 +1009,7 @@ def define_generator_constraints(n: Network, sns: Sequence) -> None:
 
     m = n.model
     c = "Generator"
-    static = n.static(c)
+    static = n.static(c).loc[n.get_active_assets(c)]
 
     if static.empty:
         return

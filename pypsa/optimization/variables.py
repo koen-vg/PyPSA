@@ -34,9 +34,10 @@ def define_operational_variables(n: Network, sns: Sequence, c: str, attr: str) -
     if n.static(c).empty:
         return
 
-    active = get_activity_mask(n, c, sns)
-    coords = [sns, n.static(c).index.rename(c)]
-    n.model.add_variables(coords=coords, name=f"{c}-{attr}", mask=active)
+    active_i = n.static(c).loc[n.get_active_assets(c)].index
+    mask = get_activity_mask(n, c, sns, active_i)
+    coords = [sns, active_i.rename(c)]
+    n.model.add_variables(coords=coords, name=f"{c}-{attr}", mask=mask)
 
 
 def define_status_variables(n: Network, sns: Sequence, c: str) -> None:
@@ -118,7 +119,7 @@ def define_modular_variables(n: Network, c: str, attr: str) -> None:
     attr : str
         name of the variable to be handled attached to modular constraints, e.g. 'p_nom'
     """
-    mod_i = n.static(c).query(f"{attr}_extendable and ({attr}_mod>0)").index
+    mod_i = n.get_extendable_i(c).intersection(n.static(c).query(f"{attr}_mod>0").index)
     mod_i = mod_i.rename(f"{c}-ext")
 
     if (mod_i).empty:
@@ -150,6 +151,7 @@ def define_loss_variables(n: Network, sns: Sequence, c: str) -> None:
     if n.static(c).empty or c not in n.passive_branch_components:
         return
 
-    active = get_activity_mask(n, c, sns)
-    coords = [sns, n.static(c).index.rename(c)]
-    n.model.add_variables(0, coords=coords, name=f"{c}-loss", mask=active)
+    active_i = n.static(c).loc[n.get_active_assets(c)].index
+    mask = get_activity_mask(n, c, sns, active_i)
+    coords = [sns, active_i.rename(c)]
+    n.model.add_variables(0, coords=coords, name=f"{c}-loss", mask=mask)
