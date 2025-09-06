@@ -935,7 +935,7 @@ class OptimizationAccessor(OptimizationAbstractMixin):
             .T.reindex(columns=n.c.buses.static.index, fill_value=0.0)
         )
 
-        if not n.has_scenarios:
+        if not n.has_scenarios and "AC" in n.c.carriers.static.index:
 
             def v_ang_for_(sub: SubNetwork) -> pd.DataFrame:
                 buses_i = sub.buses_o
