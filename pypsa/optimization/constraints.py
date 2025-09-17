@@ -1046,6 +1046,10 @@ def define_kirchhoff_voltage_constraints(n: Network, sns: pd.Index) -> None:
         https://doi.org/10.1016/j.epsr.2020.106908
 
     """
+    # Fast-path: skip entirely if the network has no passive branches
+    if all(as_components(n, c).static.empty for c in n.passive_branch_components):
+        return
+
     m = n.model
     n.calculate_dependent_values()
 
