@@ -580,8 +580,16 @@ class OptimizationAccessor(OptimizationAbstractMixin):
             weakly_meshed_buses = pd.Index(
                 [b for b in bus_names if b not in meshed_buses], name="Bus"
             )
+            # Ensure meshed_buses also has name="Bus" for MultiIndex consistency
+            meshed_buses = meshed_buses.rename("Bus")
         else:
+            # For non-MultiIndex, use the actual bus index name
+            bus_index_name = n.c.buses.static.index.name
+            meshed_buses = meshed_buses.rename(bus_index_name)
             weakly_meshed_buses = n.c.buses.static.index.difference(meshed_buses)
+            # .difference() preserves name only when both indices have same name
+            # Explicitly set it to ensure consistency
+            weakly_meshed_buses = weakly_meshed_buses.rename(bus_index_name)
 
         if not meshed_buses.empty and not weakly_meshed_buses.empty:
             # Write constraint for buses many terms and for buses with a few terms
