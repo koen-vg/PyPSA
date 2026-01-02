@@ -878,6 +878,33 @@ class OptimizationAccessor(OptimizationAbstractMixin):
 
                 c.static.loc[suffix, "mu"] = constraint.dual
 
+            # VECTORIZED GlobalConstraints (constraints with non-snapshot dimensions)
+            # Naming convention: linopy constraint "GlobalConstraint-{prefix}" with
+            # dimension values, GlobalConstraint names are "{prefix}_{dim_value}"
+            # For tuple dimension values, join with underscore: (a, b) -> "a_b"
+            elif c.name == "GlobalConstraint" and constraint.dual.dims:
+                dims = [d for d in constraint.dual.dims if d not in ("scenario",)]
+                if len(dims) == 1:
+                    dim_name = dims[0]
+                    for dim_val in constraint.dual.coords[dim_name].values:
+                        # Handle tuple dimension values (e.g., MultiIndex groupby)
+                        if isinstance(dim_val, tuple):
+                            dim_val_str = "_".join(str(v) for v in dim_val)
+                        else:
+                            dim_val_str = str(dim_val)
+                        gc_name = f"{suffix}_{dim_val_str}"
+                        if gc_name in c.static.index:
+                            dual_val = float(constraint.dual.sel({dim_name: dim_val}))
+                            c.static.loc[gc_name, "mu"] = dual_val
+                        elif assign_all_duals:
+                            c.static.loc[gc_name] = None
+                            c.static.loc[gc_name, "mu"] = float(
+                                constraint.dual.sel({dim_name: dim_val})
+                            )
+                else:
+                    # Multi-dimensional vectorized GlobalConstraints not yet supported
+                    unassigned_constraints.append(constraint_name)
+
         if unassigned_constraints:
             logger.info(
                 "The shadow-prices of the constraints %s were not assigned to the network.",
