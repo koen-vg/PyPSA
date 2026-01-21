@@ -1023,11 +1023,17 @@ class _ExporterNetCDF(_Exporter):
         new_col_name = list_name + "_t_" + attr + "_i"
         if isinstance(df.columns, pd.MultiIndex):  # stochastic
             df = df.rename_axis(index="snapshots", columns=["scenario", new_col_name])
+            self.ds[list_name + "_t_" + attr] = df.stack(
+                level=df.columns.names, future_stack=True
+            ).to_xarray()
         else:
+            # Fast path: avoid expensive pandas stack() by building MultiIndex directly
             df = df.rename_axis(index="snapshots", columns=new_col_name)
-        self.ds[list_name + "_t_" + attr] = df.stack(
-            level=df.columns.names, future_stack=True
-        ).to_xarray()
+            idx = pd.MultiIndex.from_product(
+                [df.index, df.columns], names=["snapshots", new_col_name]
+            )
+            series = pd.Series(df.values.ravel(order="C"), index=idx)
+            self.ds[list_name + "_t_" + attr] = series.to_xarray()
 
     def set_compression_encoding(self) -> None:
         """Set compression encoding for all variables."""
