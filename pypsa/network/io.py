@@ -1071,9 +1071,13 @@ class _ExporterNetCDF(_Exporter):
                 continue
 
             arr = self.ds[v].values
+            # Identify NA-like values before string conversion
+            na_mask = pd.isna(arr)
             # Convert to string array to handle mixed types (e.g. bus2/bus3 columns
             # that may contain empty strings and floats)
             arr_str = arr.astype(str)
+            # Normalize NA values to empty string (PyPSA convention: "" = "not set")
+            arr_str[na_mask] = ""
             unique_vals, indices = np.unique(arr_str, return_inverse=True)
 
             # Choose smallest integer type
