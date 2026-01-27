@@ -1985,14 +1985,22 @@ class NetworkIOMixin(_NetworkABC):
 
         if not attrs.loc[attr].static:
             # Preserve static component order for consistency
-            ordered_columns = _sort_attrs(
-                df.columns.union(static.index),
-                static.index,
-            )
-            dynamic[attr] = dynamic[attr].reindex(
-                columns=ordered_columns,
-                fill_value=attrs.loc[attr].default,
-            )
+            # Fast path: if df.columns is a subset of static.index (common when
+            # loading from NetCDF where only non-default values are stored),
+            # the result of union + _sort_attrs is just static.index
+            if df.columns.difference(static.index).empty:
+                ordered_columns = static.index
+            else:
+                ordered_columns = _sort_attrs(
+                    df.columns.union(static.index),
+                    static.index,
+                )
+            # Only reindex if columns actually differ
+            if not dynamic[attr].columns.equals(ordered_columns):
+                dynamic[attr] = dynamic[attr].reindex(
+                    columns=ordered_columns,
+                    fill_value=attrs.loc[attr].default,
+                )
         else:
             # Preserve existing dynamic order for static attrs
             ordered_columns = _sort_attrs(
