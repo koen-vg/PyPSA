@@ -901,35 +901,68 @@ class _ImporterNetCDF(_Importer):
     def get_static(self, list_name: str, index_name: str | None = None) -> pd.DataFrame:
         """Get static components data."""
         t = list_name + "_"
-        i = len(t)
+        prefix_len = len(t)
         if index_name is None:
             index_name = list_name + "_i"
         if index_name not in self.ds.coords:
             return None
-        df = pd.DataFrame()
-        for attr in self.ds.data_vars.keys():
-            attr = str(attr)
-            if attr.startswith(t) and attr[i : i + 2] != "t_":
-                da = self.ds[attr]
-                # Decode categorical encoding if present
-                if "_categories" in da.attrs:
-                    cat_coord = da.attrs["_categories"]
-                    categories = self.ds.coords[cat_coord].values
-                    index = self.ds.coords[index_name].values
-                    loaded_df = pd.Series(categories[da.values], index=index)
-                else:
-                    loaded_df = da.to_pandas()
-                if isinstance(loaded_df, pd.DataFrame):
-                    loaded_df = loaded_df.stack()
-                df[attr[i:]] = loaded_df
 
-        if df.empty:
-            index = self.ds.coords[index_name].to_index().rename("name")
-            if "scenario" in self.ds.coords:
+        # Pre-filter relevant variables (exclude time-series "_t_" variables)
+        vars_to_load = [
+            attr
+            for attr in self.ds.data_vars.keys()
+            if str(attr).startswith(t)
+            and str(attr)[prefix_len : prefix_len + 2] != "t_"
+        ]
+
+        # Build component index
+        component_index = self.ds.coords[index_name].to_index().rename("name")
+        has_scenarios = "scenario" in self.ds.coords
+
+        if not vars_to_load:
+            # No data vars - return empty DataFrame with appropriate index
+            index = component_index
+            if has_scenarios:
                 scenario_index = self.ds.coords["scenario"].to_index()
-                index = pd.MultiIndex.from_product([scenario_index, index])
-            df = pd.DataFrame(index=index)
-        return df
+                index = pd.MultiIndex.from_product(
+                    [scenario_index, component_index], names=["scenario", "name"]
+                )
+            return pd.DataFrame(index=index)
+
+        # Check if any variable actually has 2D structure (scenario dimension)
+        # Only expand index if data actually has scenarios dimension
+        data_has_scenarios = any(self.ds[attr].ndim > 1 for attr in vars_to_load)
+
+        if has_scenarios and data_has_scenarios:
+            scenario_index = self.ds.coords["scenario"].to_index()
+            index = pd.MultiIndex.from_product(
+                [scenario_index, component_index], names=["scenario", "name"]
+            )
+        else:
+            index = component_index
+
+        # Batch construct DataFrame from dict of arrays
+        data = {}
+        for attr in vars_to_load:
+            attr = str(attr)
+            da = self.ds[attr]
+            col_name = attr[prefix_len:]
+
+            # Decode categorical encoding if present
+            if "_categories" in da.attrs:
+                cat_coord = da.attrs["_categories"]
+                categories = self.ds.coords[cat_coord].values
+                # Flatten 2D categorical arrays for scenarios
+                data[col_name] = categories[da.values.ravel()]
+            elif da.ndim == 1:
+                # Simple 1D array - use values directly
+                data[col_name] = da.values
+            else:
+                # Multi-dimensional (e.g., scenarios) - flatten in correct order
+                # da has shape (scenario, component), flatten row-major
+                data[col_name] = da.values.ravel()
+
+        return pd.DataFrame(data, index=index)
 
     def get_series(self, list_name: str) -> Iterable[tuple[str, pd.DataFrame]]:
         """Get dynamic components data."""
