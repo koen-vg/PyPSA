@@ -919,7 +919,15 @@ class _ImporterNetCDF(_Importer):
         for attr in self.ds.data_vars.keys():
             attr = str(attr)
             if attr.startswith(t) and attr[i : i + 2] != "t_":
-                loaded_df = self.ds[attr].to_pandas()
+                da = self.ds[attr]
+                # Decode categorical encoding if present
+                if "_categories" in da.attrs:
+                    cat_coord = da.attrs["_categories"]
+                    categories = self.ds.coords[cat_coord].values
+                    index = self.ds.coords[index_name].values
+                    loaded_df = pd.Series(categories[da.values], index=index)
+                else:
+                    loaded_df = da.to_pandas()
                 if isinstance(loaded_df, pd.DataFrame):
                     loaded_df = loaded_df.stack()
                 df[attr[i:]] = loaded_df
@@ -965,6 +973,7 @@ class _ExporterNetCDF(_Exporter):
         path: Path | str | None,
         compression: dict | None = None,
         float32: bool = False,
+        categorical: bool = False,
     ) -> None:
         """Initialize exporter for netCDF files.
 
@@ -976,6 +985,8 @@ class _ExporterNetCDF(_Exporter):
             Compression settings for the netCDF file.
         float32 : bool, default False
             If True, typecast float64 to float32.
+        categorical : bool, default False
+            If True, encode string columns as integer indices with lookup coordinates.
 
         """
         self.path = path
@@ -983,6 +994,7 @@ class _ExporterNetCDF(_Exporter):
             compression = {"zlib": True, "complevel": 4}
         self.compression = compression
         self.float32 = float32
+        self.categorical = categorical
         self.ds = xr.Dataset()
 
     def save_attributes(self, attrs: dict) -> None:
@@ -1060,11 +1072,43 @@ class _ExporterNetCDF(_Exporter):
             if self.ds[v].dtype == np.float64:
                 self.ds[v] = self.ds[v].astype(np.float32)
 
+    def encode_categorical(self) -> None:
+        """Convert string variables to integer indices with lookup coordinates."""
+        logger.debug("Encoding string variables as categorical.")
+        for v in list(self.ds.data_vars):
+            if self.ds[v].dtype.kind not in ["U", "O"]:
+                continue
+
+            arr = self.ds[v].values
+            # Identify NA-like values before string conversion
+            na_mask = pd.isna(arr)
+            # Convert to string array to handle mixed types (e.g. bus2/bus3 columns
+            # that may contain empty strings and floats)
+            arr_str = arr.astype(str)
+            # Normalize NA values to empty string (PyPSA convention: "" = "not set")
+            arr_str[na_mask] = ""
+            unique_vals, indices = np.unique(arr_str, return_inverse=True)
+
+            # Choose smallest integer type
+            n = len(unique_vals)
+            dtype = np.uint8 if n <= 255 else (np.uint16 if n <= 65535 else np.uint32)
+
+            # Store indices as variable, lookup as coordinate
+            cat_coord = f"{v}_cat"
+            self.ds[v] = xr.DataArray(
+                indices.astype(dtype).reshape(self.ds[v].shape),
+                dims=self.ds[v].dims,
+                attrs={"_categories": cat_coord},
+            )
+            self.ds.coords[cat_coord] = unique_vals
+
     def finish(self) -> None:
         """Finish the export process.
 
         Runs post-processing, compression and saving to disk.
         """
+        if self.categorical:
+            self.encode_categorical()
         if self.float32:
             self.typecast_float32()
         if self.compression:
@@ -1689,6 +1733,7 @@ class NetworkIOMixin(_NetworkABC):
         export_standard_types: bool = False,
         compression: dict | None = None,
         float32: bool = False,
+        categorical: bool = True,
     ) -> xr.Dataset:
         r"""Export network and components to a netCDF file.
 
@@ -1719,6 +1764,9 @@ class NetworkIOMixin(_NetworkABC):
             The default is None which disables compression.
         float32 : boolean, default False
             If True, typecasts values to float32.
+        categorical : boolean, default True
+            If True, encode string columns as integer indices with lookup coordinates.
+            This significantly reduces file size for networks with many repeated strings.
 
         Returns
         -------
@@ -1735,7 +1783,7 @@ class NetworkIOMixin(_NetworkABC):
         [pypsa.Network.export_to_excel][]
 
         """
-        with _ExporterNetCDF(path, compression, float32) as exporter:
+        with _ExporterNetCDF(path, compression, float32, categorical) as exporter:
             self._export_to_exporter(
                 exporter, export_standard_types=export_standard_types
             )
