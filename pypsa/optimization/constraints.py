@@ -1076,12 +1076,17 @@ def define_nodal_balance_constraints(
         # Only keep the first scenario if there are multiple
         if n.has_scenarios:
             cbuses = cbuses.isel(scenario=0, drop=True)
-        cbuses = cbuses[cbuses.isin(buses)].rename("Bus")
 
-        if not cbuses.size:
+        # `numpy.isin` on object arrays scales poorly; use pandas hashing instead
+        cbuses_data = cbuses.data
+        mask = pd.Index(cbuses_data).isin(buses)
+
+        if not mask.any():
             continue
 
-        #  drop non-existent multiport buses which are ''
+        cbuses = cbuses[mask].rename("Bus")
+
+        # drop non-existent multiport buses which are ''
         if (
             c.name in n.controllable_branch_components
             and isinstance(c, _Multiport)
@@ -1118,11 +1123,16 @@ def define_nodal_balance_constraints(
             cbuses = cbuses.sel(name=names)
             if n.has_scenarios:
                 cbuses = cbuses.isel(scenario=0, drop=True)
-            cbuses = cbuses[cbuses.isin(buses)].rename("Bus")
-            cbuses = cbuses[cbuses != ""]
 
-            if not cbuses.size:
+            # `numpy.isin` on object arrays scales poorly; use pandas hashing
+            cbuses_data = cbuses.data
+            mask = pd.Index(cbuses_data).isin(buses)
+            mask &= cbuses_data != ""
+
+            if not mask.any():
                 continue
+
+            cbuses = cbuses[mask].rename("Bus")
 
             expr = expr.sel(name=cbuses.coords["name"].values)
             if expr.size:
