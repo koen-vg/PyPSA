@@ -1104,23 +1104,58 @@ class OptimizationAccessor(OptimizationAbstractMixin):
             # dimension values, GlobalConstraint names are "{prefix}_{dim_value}"
             # For tuple dimension values, join with underscore: (a, b) -> "a_b"
             elif c.name == "GlobalConstraint" and constraint.dual.dims:
-                dims = [d for d in constraint.dual.dims if d not in ("scenario",)]
-                if len(dims) == 1:
+                # Access .dual once: it is a property that reconstructs the full
+                # DataArray on every access, so re-reading it per element (with a
+                # scalar .sel/.loc) is O(n^2) for constraints with a large
+                # dimension (e.g. one entry per link). Build the names and assign
+                # the duals vectorially instead.
+                dual_da = constraint.dual
+                dims = [d for d in dual_da.dims if d not in ("scenario",)]
+                if len(dims) == 1 and "scenario" not in dual_da.dims:
                     dim_name = dims[0]
-                    for dim_val in constraint.dual.coords[dim_name].values:
-                        # Handle tuple dimension values (e.g., MultiIndex groupby)
+                    dim_vals = dual_da.coords[dim_name].values
+                    dual_vals = np.asarray(dual_da.values).ravel()
+                    # GlobalConstraint names are "{suffix}_{dim_value}"; tuple
+                    # dimension values (MultiIndex groupby) join with "_".
+                    gc_names = pd.Index(
+                        [
+                            f"{suffix}_"
+                            + (
+                                "_".join(str(v) for v in dim_val)
+                                if isinstance(dim_val, tuple)
+                                else str(dim_val)
+                            )
+                            for dim_val in dim_vals
+                        ]
+                    )
+                    duals = pd.Series(dual_vals, index=gc_names)
+                    existing = gc_names.isin(c.static.index)
+                    if existing.any():
+                        c.static.loc[gc_names[existing], "mu"] = duals[
+                            existing
+                        ].to_numpy()
+                    if assign_all_duals and (~existing).any():
+                        missing = gc_names[~existing]
+                        c.static = c.static.reindex(c.static.index.append(missing))
+                        c.static.loc[missing, "mu"] = duals[~existing].to_numpy()
+                elif len(dims) == 1:
+                    # Scenario-dimensioned vectorized GlobalConstraint: keep the
+                    # element-wise path (stochastic case, not used in GLADE).
+                    dim_name = dims[0]
+                    for dim_val in dual_da.coords[dim_name].values:
                         if isinstance(dim_val, tuple):
                             dim_val_str = "_".join(str(v) for v in dim_val)
                         else:
                             dim_val_str = str(dim_val)
                         gc_name = f"{suffix}_{dim_val_str}"
                         if gc_name in c.static.index:
-                            dual_val = float(constraint.dual.sel({dim_name: dim_val}))
-                            c.static.loc[gc_name, "mu"] = dual_val
+                            c.static.loc[gc_name, "mu"] = float(
+                                dual_da.sel({dim_name: dim_val})
+                            )
                         elif assign_all_duals:
                             c.static.loc[gc_name] = None
                             c.static.loc[gc_name, "mu"] = float(
-                                constraint.dual.sel({dim_name: dim_val})
+                                dual_da.sel({dim_name: dim_val})
                             )
                 else:
                     # Multi-dimensional vectorized GlobalConstraints not yet supported
