@@ -14,7 +14,7 @@ import linopy
 import pandas as pd
 import xarray as xr
 from linopy import merge
-from numpy import inf, isfinite, maximum, sqrt, tile
+from numpy import inf, isfinite, isscalar, maximum, sqrt, tile
 from xarray import DataArray, concat, where
 
 from pypsa.common import as_index, expand_series
@@ -948,18 +948,30 @@ def _iter_balance_args(
 
     active = c.active_assets
     delay_config = _get_delay_config(c)
+    static_index = c.static.index
 
     for port in c._output_ports:
         suffix = c._port_suffix(port)
         coeff = c.da[f"{c._coefficient_attr}{suffix}"].sel(snapshot=sns)
         delays, cyclics = delay_config[suffix]
 
-        for (d, cyc), group in c.static.assign(_delay=delays, _cyclic=cyclics).groupby(
-            ["_delay", "_cyclic"]
-        ):
+        # Group names by their (delay, cyclic) configuration. Building a
+        # two-column frame from just the delay/cyclic columns avoids the deep
+        # copy and block consolidation that c.static.assign(...) triggers on
+        # the (wide, object-dtype) static frame once per port -- the dominant
+        # create_model cost on networks with many multiport Links.
+        if isscalar(delays) and isscalar(cyclics):
+            groups = [((delays, cyclics), static_index)]
+        else:
+            group_frame = pd.DataFrame({"_delay": delays, "_cyclic": cyclics})
+            groups = [
+                (key, grp.index)
+                for key, grp in group_frame.groupby(["_delay", "_cyclic"])
+            ]
+
+        for (d, cyc), names in groups:
             delay_int = int(d)
 
-            names = group.index
             if isinstance(names, pd.MultiIndex):
                 names = names.get_level_values("name").unique()
             names = names.intersection(active)
