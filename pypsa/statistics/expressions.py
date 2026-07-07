@@ -32,6 +32,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _clip_df(
+    df: pd.DataFrame, lower: float | None = None, upper: float | None = None
+) -> pd.DataFrame:
+    """Clip a numeric DataFrame via numpy, avoiding per-column overhead.
+
+    ``DataFrame.clip`` routes through ``DataFrame.where``, which validates
+    dtypes column by column. For very wide frames (many components, few
+    snapshots) this per-column overhead dominates the actual clipping work,
+    so clip the underlying array in one vectorized operation instead.
+    """
+    values = np.clip(
+        df.to_numpy(),
+        -np.inf if lower is None else lower,
+        np.inf if upper is None else upper,
+    )
+    return pd.DataFrame(values, index=df.index, columns=df.columns)
+
+
 def get_operation(n: Network, c: str) -> pd.DataFrame:
     """Get the reference operation data for a network component.
 
@@ -2270,9 +2288,9 @@ class StatisticsAccessor(AbstractStatisticsAccessor):
             weights = n.snapshot_weightings.generators
             p = sign * n.c[c].dynamic[f"p{port}"]
             if direction == "supply":
-                p = p.clip(lower=0)
+                p = _clip_df(p, lower=0)
             elif direction == "withdrawal":
-                p = -p.clip(upper=0)
+                p = -_clip_df(p, upper=0)
             elif direction != "both":
                 msg = f"Argument 'direction' must be 'supply', 'withdrawal' or 'both', got '{direction}'."
                 raise ValueError(msg)
@@ -2387,10 +2405,11 @@ class StatisticsAccessor(AbstractStatisticsAccessor):
 
         @pass_empty_series_if_keyerror
         def func(n: Network, c: str, port: str) -> pd.Series:
-            p = (
+            p = _clip_df(
                 n.get_switchable_as_dense(c, "p_max_pu") * n.c[c].static.p_nom_opt
-                - n.c[c].dynamic.p
-            ).clip(lower=0)
+                - n.c[c].dynamic.p,
+                lower=0,
+            )
             weights = n.snapshot_weightings.generators
             return self._aggregate_timeseries(p, weights, agg=groupby_time)
 
@@ -2637,9 +2656,9 @@ class StatisticsAccessor(AbstractStatisticsAccessor):
                 columns=buses, fill_value=0
             ).values
             if direction == "input":
-                df = df.clip(upper=0)
+                df = _clip_df(df, upper=0)
             elif direction == "output":
-                df = df.clip(lower=0)
+                df = _clip_df(df, lower=0)
             elif direction != "both":
                 msg = f"Argument 'direction' must be 'input', 'output' or 'both', got '{direction}'."
                 raise ValueError(msg)
