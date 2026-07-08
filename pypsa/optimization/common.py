@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 from deprecation import deprecated
-from numpy import hstack, ravel
+from numpy import hstack, isnan, ravel, where
 
 from pypsa.constants import RE_PORTS
 
@@ -53,7 +53,20 @@ def _set_dynamic_data(n: Network, component: str, attr: str, df: pd.DataFrame) -
         c.dynamic[attr] = df.reindex(n.snapshots)
 
     else:
-        c.dynamic[attr].update(df)
+        existing = c.dynamic[attr]
+        pos = (
+            existing.columns.get_indexer(df.columns)
+            if existing.columns.is_unique and existing.index.equals(df.index)
+            else None
+        )
+        new = df.to_numpy() if pos is not None else None
+        if new is not None and (pos >= 0).all() and new.dtype.kind == "f":
+            # Fast equivalent of DataFrame.update (which runs a python-level
+            # `where` per column): overwrite with the non-NaN values of df.
+            current = existing.iloc[:, pos].to_numpy()
+            existing.iloc[:, pos] = where(isnan(new), current, new)
+        else:
+            existing.update(df)
 
     # Reindex to match network snapshots and component names
     result = c.dynamic[attr].reindex(n.snapshots, level="snapshot", axis=0)

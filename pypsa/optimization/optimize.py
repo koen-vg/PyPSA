@@ -104,6 +104,11 @@ def _apply_delay_shift(
     delay_weightings = n.snapshot_weightings.generators.loc[sns]
     for (d, cyc), grp in delayed.groupby(grp_cols):
         cols = grp.index
+        # port_df may cover only the assets connected at this port
+        if len(cols.difference(port_df.columns)):
+            cols = cols.intersection(port_df.columns)
+            if cols.empty:
+                continue
         src_pos, valid = c.get_delay_source_indexer(
             sns,
             delay_weightings,
@@ -946,22 +951,53 @@ class OptimizationAccessor(OptimizationAbstractMixin):
 
                     for i in ["1"] + c.additional_ports:
                         i_suffix = "" if i == "1" else i
-                        eff = n.get_switchable_as_dense(
-                            "Link", f"efficiency{i_suffix}", sns
-                        )
-                        port_df = -df * eff
-                        _apply_delay_shift(
-                            port_df,
-                            c,
-                            f"delay{i_suffix}",
-                            f"cyclic_delay{i_suffix}",
-                            sns,
-                            n,
-                        )
-                        _set_dynamic_data(n, c.name, f"p{i}", port_df)
-                        c.dynamic[f"p{i}"].loc[
-                            sns, c.static.index[c.static[f"bus{i}"] == ""]
-                        ] = float(c.defaults.loc[f"p{i}", "default"])
+                        default = float(c.defaults.loc[f"p{i}", "default"])
+                        disconnected = c.static[f"bus{i}"].to_numpy() == ""
+                        if n.has_scenarios or not disconnected.any():
+                            eff = n.get_switchable_as_dense(
+                                "Link", f"efficiency{i_suffix}", sns
+                            )
+                            port_df = -df * eff
+                            _apply_delay_shift(
+                                port_df,
+                                c,
+                                f"delay{i_suffix}",
+                                f"cyclic_delay{i_suffix}",
+                                sns,
+                                n,
+                            )
+                            _set_dynamic_data(n, c.name, f"p{i}", port_df)
+                            if disconnected.any():
+                                c.dynamic[f"p{i}"].loc[
+                                    sns, c.static.index[c.static[f"bus{i}"] == ""]
+                                ] = default
+                        else:
+                            # Compute port flows only for links connected at
+                            # this port, then scatter into a full-width array
+                            # holding the default; label-based assignment of
+                            # the default after the fact would set hundreds of
+                            # thousands of columns one at a time.
+                            connected_i = c.static.index[~disconnected]
+                            eff = c._as_dynamic(
+                                f"efficiency{i_suffix}", sns, inds=connected_i
+                            )
+                            port_df = -df[eff.columns] * eff
+                            _apply_delay_shift(
+                                port_df,
+                                c,
+                                f"delay{i_suffix}",
+                                f"cyclic_delay{i_suffix}",
+                                sns,
+                                n,
+                            )
+                            data = np.full(
+                                (len(port_df.index), len(c.static.index)), default
+                            )
+                            data[:, ~disconnected] = port_df.to_numpy()
+                            full_df = pd.DataFrame(
+                                data, index=port_df.index, columns=c.static.index
+                            )
+                            _set_dynamic_data(n, c.name, f"p{i}", full_df)
 
                 elif c.name == "Process" and attr == "p":
                     _set_dynamic_data(n, c.name, "p", df)
@@ -1216,21 +1252,56 @@ class OptimizationAccessor(OptimizationAbstractMixin):
         def sign(c: str) -> int:
             return n.c[c].static.get("sign", -1)  # -1 is the sign for 'Link'
 
-        n.c.buses.dynamic.p = (
-            pd.concat(
-                [
-                    n.c[c]
-                    .dynamic[attr]
-                    .mul(sign(c))
-                    .rename(columns=n.c[c].static[group], level="name")
-                    for c, attr, group in ca
-                ],
-                axis=1,
+        if n.has_scenarios:
+            n.c.buses.dynamic.p = (
+                pd.concat(
+                    [
+                        n.c[c]
+                        .dynamic[attr]
+                        .mul(sign(c))
+                        .rename(columns=n.c[c].static[group], level="name")
+                        for c, attr, group in ca
+                    ],
+                    axis=1,
+                )
+                .T.groupby(level=0)
+                .sum()
+                .T.reindex(columns=n.c.buses.static.index, fill_value=0.0)
             )
-            .T.groupby(level=0)
-            .sum()
-            .T.reindex(columns=n.c.buses.static.index, fill_value=0.0)
-        )
+        else:
+            # Accumulate injections per bus with numpy instead of renaming
+            # every asset column to its bus (a per-label python lookup) and
+            # transposing a frame with one column per asset port. The dynamic
+            # frames span all network snapshots (not just the optimized sns),
+            # matching the previous concat-based result.
+            buses_i = n.c.buses.static.index
+            snapshots = n.snapshots
+            injection = np.zeros((len(snapshots), len(buses_i)))
+            for c, attr, group in ca:
+                df = n.c[c].dynamic.get(attr)
+                if df is None or df.empty:
+                    continue
+                if not df.index.equals(snapshots):
+                    df = df.reindex(snapshots)
+                buses = n.c[c].static[group]
+                if not buses.index.equals(df.columns):
+                    buses = buses.reindex(df.columns, fill_value="")
+                codes = buses_i.get_indexer(buses.to_numpy())
+                valid = codes >= 0
+                if not valid.any():
+                    continue
+                vals = df.to_numpy(dtype=float)[:, valid]
+                s = sign(c)
+                if isinstance(s, pd.Series):
+                    if not s.index.equals(df.columns):
+                        s = s.reindex(df.columns)
+                    vals = vals * s.to_numpy()[valid]
+                else:
+                    vals = vals * s
+                np.add.at(injection.T, codes[valid], np.nan_to_num(vals).T)
+            n.c.buses.dynamic.p = pd.DataFrame(
+                injection, index=snapshots, columns=buses_i
+            )
 
         if not n.has_scenarios and "AC" in n.c.carriers.static.index:
 
