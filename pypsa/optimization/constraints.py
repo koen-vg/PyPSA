@@ -952,7 +952,37 @@ def _iter_balance_args(
 
     for port in c._output_ports:
         suffix = c._port_suffix(port)
-        coeff = c.da[f"{c._coefficient_attr}{suffix}"].sel(snapshot=sns)
+        # Restrict to assets actually connected at this port before building
+        # any coefficient arrays or groups. Additional ports (bus2 and up) are
+        # typically only used by a small subset of assets, and downstream
+        # callers multiply the yielded coefficients with the full operational
+        # variable; without this filter every port pays full-index costs.
+        connected = c.static[f"bus{port}"].to_numpy() != ""
+        if not connected.any():
+            continue
+        all_connected = bool(connected.all())
+        port_index = static_index if all_connected else static_index[connected]
+
+        # Materialize the coefficient only over the connected subset. Going
+        # through ``c.da`` would broadcast the static column over snapshots
+        # for the full index on every port (the attribute is registered in
+        # ``c.dynamic`` even when no time-varying values exist).
+        attr = f"{c._coefficient_attr}{suffix}"
+        dyn = c.dynamic.get(attr)
+        if c.has_scenarios:
+            coeff = c.da[attr].sel(snapshot=sns)
+        elif dyn is None or dyn.empty:
+            static_vals = c.static[attr]
+            if not all_connected:
+                static_vals = static_vals[connected]
+            coeff = xr.DataArray(
+                tile(static_vals.to_numpy(), (len(sns), 1)),
+                coords={"snapshot": sns, "name": port_index},
+                dims=("snapshot", "name"),
+                name=attr,
+            )
+        else:
+            coeff = xr.DataArray(c._as_dynamic(attr, sns, inds=port_index))
         delays, cyclics = delay_config[suffix]
 
         # Group names by their (delay, cyclic) configuration. Building a
@@ -961,8 +991,11 @@ def _iter_balance_args(
         # the (wide, object-dtype) static frame once per port -- the dominant
         # create_model cost on networks with many multiport Links.
         if isscalar(delays) and isscalar(cyclics):
-            groups = [((delays, cyclics), static_index)]
+            groups = [((delays, cyclics), port_index)]
         else:
+            if not all_connected:
+                delays = delays[connected]
+                cyclics = cyclics[connected]
             group_frame = pd.DataFrame({"_delay": delays, "_cyclic": cyclics})
             groups = [
                 (key, grp.index)
@@ -977,9 +1010,18 @@ def _iter_balance_args(
             names = names.intersection(active)
 
             if not names.empty:
+                # When the group covers the whole connected subset (and no
+                # scenario unstacking reordered the coefficient), skip the
+                # (re-)selection so the coefficient keeps ``port_index`` as
+                # its coordinate; identical index objects let downstream
+                # xarray alignment short-circuit.
+                if c.has_scenarios or names.size != coeff.sizes["name"]:
+                    port_coeff = coeff.sel(name=names)
+                else:
+                    port_coeff = coeff
                 yield (
                     f"bus{port}",
-                    coeff.sel(name=names),
+                    port_coeff,
                     names,
                     delay_int,
                     bool(cyc),
@@ -1114,7 +1156,10 @@ def define_nodal_balance_constraints(
         c = n.c[component]
         for bus_col, coeff, names, delay, is_cyclic in _iter_balance_args(c, sns):
             if delay <= 0:
-                expr = coeff * m[f"{c.name}-p"]
+                # Select the subset of the variable up front: multiplying the
+                # (already subset) coefficient with the full variable would
+                # make xarray align/reindex over the full index per port.
+                expr = coeff * m[f"{c.name}-p"].sel(name=names)
             else:
                 src_snapshot_pos, valid = c.get_delay_source_indexer(
                     sns,
